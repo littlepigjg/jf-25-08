@@ -1,0 +1,68 @@
+[
+  {
+    "file": "compress_test_2026-06-15_08-20-32.jsonl.gz",
+    "startTime": "2026-06-15T08:20:32.359Z",
+    "endTime": "2026-06-15T08:20:32.388Z",
+    "recordCount": 20,
+    "size": 2335,
+    "compressed": true,
+    "originalSize": 10748,
+    "compressedSize": 2335,
+    "compressedAt": "2026-06-15T08:20:34.427Z"
+  },
+  {
+    "file": "compress_test_2026-06-15_08-20-32_1.jsonl.gz",
+    "startTime": "2026-06-15T08:20:32.493Z",
+    "endTime": "2026-06-15T08:20:32.491Z",
+    "recordCount": 20,
+    "size": 2352,
+    "compressed": true,
+    "originalSize": 10756,
+    "compressedSize": 2352,
+    "compressedAt": "2026-06-15T08:20:32.619Z"
+  },
+  {
+    "file": "compress_test_2026-06-15_08-20-32_2.jsonl.gz",
+    "startTime": "2026-06-15T08:20:32.614Z",
+    "endTime": "2026-06-15T08:20:32.613Z",
+    "recordCount": 20,
+    "size": 2318,
+    "compressed": true,
+    "originalSize": 10762,
+    "compressedSize": 2318,
+    "compressedAt": "2026-06-15T08:20:32.734Z"
+  },
+  {
+    "file": "compress_test_2026-06-15_08-20-32_3.jsonl.gz",
+    "startTime": "2026-06-15T08:20:32.724Z",
+    "endTime": "2026-06-15T08:20:32.724Z",
+    "recordCount": 20,
+    "size": 2320,
+    "compressed": true,
+    "originalSize": 10737,
+    "compressedSize": 2320,
+    "compressedAt": "2026-06-15T08:20:33.338Z"
+  },
+  {
+    "file": "compress_test_2026-06-15_08-20-33.jsonl",
+    "startTime": "2026-06-15T08:20:33.334Z",
+    "endTime": "2026-06-15T08:20:34.559Z",
+    "recordCount": 0,
+    "size": 2,
+    "compressed": false,
+    "originalSize": 0,
+    "compressedSize": 0,
+    "compressedAt": null
+  },
+  {
+    "file": "compress_test_2026-06-15.jsonl",
+    "startTime": "2026-06-15T08:20:34.560Z",
+    "endTime": "2026-06-15T08:20:34.564Z",
+    "recordCount": 0,
+    "size": 1,
+    "compressed": false,
+    "originalSize": 0,
+    "compressedSize": 0,
+    "compressedAt": null
+  }
+]

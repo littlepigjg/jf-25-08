@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const zlib = require('zlib');
 const { EventEmitter } = require('events');
 
 const DEFAULT_OPTIONS = {
@@ -10,7 +11,11 @@ const DEFAULT_OPTIONS = {
   baseName: 'performance_log',
   flushInterval: 5000,
   maxBufferedRecords: 1000,
-  encoding: 'utf-8'
+  encoding: 'utf-8',
+  enableCompression: true,
+  compressionThreshold: 100 * 1024 * 1024,
+  compressionLevel: 6,
+  autoCompressCheckInterval: 60000
 };
 
 class LogManager extends EventEmitter {
@@ -27,6 +32,8 @@ class LogManager extends EventEmitter {
     this.fileIndex = [];
     this.writeStream = null;
     this.isFlushing = false;
+    this.isCompressing = new Set();
+    this.compressCheckTimer = null;
   }
 
   async start(logDir) {
@@ -52,6 +59,12 @@ class LogManager extends EventEmitter {
       this._flush();
     }, this.options.flushInterval);
 
+    if (this.options.enableCompression) {
+      this.compressCheckTimer = setInterval(() => {
+        this._checkAndCompressOldFiles();
+      }, this.options.autoCompressCheckInterval);
+    }
+
     this.emit('started', { file: this.currentFile });
   }
 
@@ -63,6 +76,11 @@ class LogManager extends EventEmitter {
     if (this.flushTimer) {
       clearInterval(this.flushTimer);
       this.flushTimer = null;
+    }
+
+    if (this.compressCheckTimer) {
+      clearInterval(this.compressCheckTimer);
+      this.compressCheckTimer = null;
     }
 
     await this._flush(true);
@@ -114,7 +132,7 @@ class LogManager extends EventEmitter {
       fileName = `${baseFileName}${suffix}.jsonl`;
       filePath = path.join(this.options.logDir, fileName);
       fileIndex++;
-    } while (fs.existsSync(filePath));
+    } while (fs.existsSync(filePath) || fs.existsSync(filePath + '.gz'));
 
     this.currentFile = filePath;
 
@@ -132,7 +150,11 @@ class LogManager extends EventEmitter {
       startTime: now.toISOString(),
       endTime: now.toISOString(),
       recordCount: 0,
-      size: 0
+      size: 0,
+      compressed: false,
+      originalSize: 0,
+      compressedSize: 0,
+      compressedAt: null
     };
     this.fileIndex.push(indexEntry);
 
@@ -165,7 +187,17 @@ class LogManager extends EventEmitter {
 
     if (needSplit) {
       await this._saveFileIndex();
+      
+      const justClosedFile = this.currentFile;
+      const justClosedIndex = this.fileIndex.length - 1;
+      
       await this._createNewFile();
+      
+      if (this.options.enableCompression && justClosedIndex >= 0) {
+        setImmediate(() => {
+          this._maybeCompressFile(justClosedFile, justClosedIndex);
+        });
+      }
     }
   }
 
@@ -242,26 +274,37 @@ class LogManager extends EventEmitter {
 
     if (this.fileIndex.length === 0) {
       await this._rebuildIndex();
+    } else {
+      for (const entry of this.fileIndex) {
+        if (entry.compressed === undefined) entry.compressed = false;
+        if (entry.originalSize === undefined) entry.originalSize = entry.size || 0;
+        if (entry.compressedSize === undefined) entry.compressedSize = 0;
+        if (entry.compressedAt === undefined) entry.compressedAt = null;
+      }
     }
   }
 
   async _rebuildIndex() {
-    const files = fs.readdirSync(this.options.logDir)
-      .filter(f => f.startsWith(this.options.baseName) && f.endsWith('.jsonl'))
-      .sort();
+    const allFiles = fs.readdirSync(this.options.logDir).sort();
+    const jsonlFiles = allFiles.filter(f => 
+      f.startsWith(this.options.baseName) && 
+      (f.endsWith('.jsonl') || f.endsWith('.jsonl.gz'))
+    );
 
     this.fileIndex = [];
 
-    for (const file of files) {
+    for (const file of jsonlFiles) {
       const filePath = path.join(this.options.logDir, file);
       const stats = fs.statSync(filePath);
+      const isCompressed = file.endsWith('.gz');
+      const displayName = isCompressed ? file.slice(0, -3) : file;
       
       let firstRecord = null;
       let lastRecord = null;
       let count = 0;
 
       try {
-        const stream = fs.createReadStream(filePath, { encoding: this.options.encoding });
+        const stream = await this._createReadStream(filePath);
         let buffer = '';
         
         for await (const chunk of stream) {
@@ -283,13 +326,18 @@ class LogManager extends EventEmitter {
       } catch {}
 
       if (count > 0) {
-        this.fileIndex.push({
-          file,
+        const fileEntry = {
+          file: file,
           startTime: firstRecord?.timestamp || stats.birthtime.toISOString(),
           endTime: lastRecord?.timestamp || stats.mtime.toISOString(),
           recordCount: count,
-          size: stats.size
-        });
+          size: stats.size,
+          compressed: isCompressed,
+          originalSize: isCompressed ? 0 : stats.size,
+          compressedSize: isCompressed ? stats.size : 0,
+          compressedAt: isCompressed ? stats.mtime.toISOString() : null
+        };
+        this.fileIndex.push(fileEntry);
       } else {
         try {
           fs.unlinkSync(filePath);
@@ -307,6 +355,248 @@ class LogManager extends EventEmitter {
     } catch (err) {
       this.emit('error', { type: 'save-index', error: err.message });
     }
+  }
+
+  async _createReadStream(filePath) {
+    const isCompressed = filePath.endsWith('.gz');
+    let stream = fs.createReadStream(filePath, { 
+      encoding: isCompressed ? undefined : this.options.encoding,
+      highWaterMark: 64 * 1024
+    });
+    
+    if (isCompressed) {
+      const gunzip = zlib.createGunzip();
+      stream = stream.pipe(gunzip);
+      stream.setEncoding(this.options.encoding);
+    }
+    
+    return stream;
+  }
+
+  async _checkAndCompressOldFiles() {
+    if (!this.options.enableCompression) return;
+
+    const currentBaseName = path.basename(this.currentFile);
+
+    for (let i = 0; i < this.fileIndex.length; i++) {
+      const entry = this.fileIndex[i];
+      if (entry.compressed) continue;
+      if (entry.file === currentBaseName) continue;
+      if (this.isCompressing.has(entry.file)) continue;
+
+      const filePath = path.join(this.options.logDir, entry.file);
+      if (!fs.existsSync(filePath)) continue;
+
+      const stats = fs.statSync(filePath);
+      if (stats.size >= this.options.compressionThreshold) {
+        this._maybeCompressFile(filePath, i);
+      }
+    }
+  }
+
+  _maybeCompressFile(filePath, indexPos) {
+    if (!this.options.enableCompression) return;
+    
+    const entry = this.fileIndex[indexPos];
+    if (!entry || entry.compressed) return;
+    if (this.isCompressing.has(entry.file)) return;
+
+    const actualSize = fs.existsSync(filePath) ? fs.statSync(filePath).size : 0;
+    if (actualSize < this.options.compressionThreshold) return;
+
+    this.isCompressing.add(entry.file);
+    
+    this._compressFileInternal(filePath, indexPos)
+      .then(() => {
+        this.isCompressing.delete(entry.file);
+      })
+      .catch((err) => {
+        this.isCompressing.delete(entry.file);
+        this.emit('error', { type: 'compression', file: entry.file, error: err.message });
+      });
+  }
+
+  async _compressFileInternal(filePath, indexPos) {
+    const entry = this.fileIndex[indexPos];
+    const gzPath = filePath + '.gz';
+    const tmpPath = gzPath + '.tmp';
+
+    this.emit('compression-started', { file: entry.file });
+
+    const originalSize = fs.statSync(filePath).size;
+
+    await new Promise((resolve, reject) => {
+      const readStream = fs.createReadStream(filePath);
+      const gzip = zlib.createGzip({ level: this.options.compressionLevel });
+      const writeStream = fs.createWriteStream(tmpPath);
+
+      readStream.on('error', reject);
+      gzip.on('error', reject);
+      writeStream.on('error', reject);
+      writeStream.on('finish', resolve);
+
+      readStream.pipe(gzip).pipe(writeStream);
+    });
+
+    const compressedSize = fs.statSync(tmpPath).size;
+
+    fs.renameSync(tmpPath, gzPath);
+    fs.unlinkSync(filePath);
+
+    entry.file = entry.file + '.gz';
+    entry.compressed = true;
+    entry.originalSize = originalSize;
+    entry.compressedSize = compressedSize;
+    entry.size = compressedSize;
+    entry.compressedAt = new Date().toISOString();
+
+    await this._saveFileIndex();
+
+    this.emit('compression-finished', {
+      file: entry.file,
+      originalSize,
+      compressedSize,
+      ratio: originalSize > 0 ? (1 - compressedSize / originalSize) : 0
+    });
+  }
+
+  async compressFile(fileName) {
+    let indexPos = this.fileIndex.findIndex(e => e.file === fileName);
+    if (indexPos < 0) {
+      const gzName = fileName.endsWith('.gz') ? fileName : fileName + '.gz';
+      indexPos = this.fileIndex.findIndex(e => e.file === gzName);
+      if (indexPos >= 0 && this.fileIndex[indexPos].compressed) {
+        return { alreadyCompressed: true, file: gzName };
+      }
+      throw new Error('文件不存在: ' + fileName);
+    }
+
+    const entry = this.fileIndex[indexPos];
+    if (entry.compressed) {
+      return { alreadyCompressed: true, file: entry.file };
+    }
+
+    const currentBaseName = path.basename(this.currentFile);
+    if (entry.file === currentBaseName) {
+      await this._flush(true);
+      await this._saveFileIndex();
+      await this._createNewFile();
+      indexPos = this.fileIndex.findIndex(e => e.file === fileName);
+    }
+
+    if (indexPos < 0) throw new Error('文件不存在: ' + fileName);
+
+    const filePath = path.join(this.options.logDir, this.fileIndex[indexPos].file);
+    if (!fs.existsSync(filePath)) throw new Error('文件不存在: ' + fileName);
+
+    this.isCompressing.add(this.fileIndex[indexPos].file);
+    try {
+      await this._compressFileInternal(filePath, indexPos);
+      return { 
+        success: true, 
+        file: this.fileIndex[indexPos].file,
+        originalSize: this.fileIndex[indexPos].originalSize,
+        compressedSize: this.fileIndex[indexPos].compressedSize
+      };
+    } finally {
+      this.isCompressing.delete(fileName);
+    }
+  }
+
+  async decompressFile(fileName) {
+    let indexPos = this.fileIndex.findIndex(e => e.file === fileName);
+    if (indexPos < 0) {
+      const baseName = fileName.endsWith('.gz') ? fileName.slice(0, -3) : fileName;
+      const gzName = baseName + '.gz';
+      indexPos = this.fileIndex.findIndex(e => e.file === gzName);
+      if (indexPos < 0) {
+        throw new Error('文件不存在: ' + fileName);
+      }
+      fileName = gzName;
+    }
+
+    const entry = this.fileIndex[indexPos];
+    if (!entry.compressed) {
+      return { alreadyDecompressed: true, file: entry.file };
+    }
+
+    const gzPath = path.join(this.options.logDir, fileName);
+    const basePath = gzPath.slice(0, -3);
+    const tmpPath = basePath + '.tmp';
+
+    if (!fs.existsSync(gzPath)) throw new Error('压缩文件不存在: ' + fileName);
+
+    this.emit('decompression-started', { file: fileName });
+
+    await new Promise((resolve, reject) => {
+      const readStream = fs.createReadStream(gzPath);
+      const gunzip = zlib.createGunzip();
+      const writeStream = fs.createWriteStream(tmpPath);
+
+      readStream.on('error', reject);
+      gunzip.on('error', reject);
+      writeStream.on('error', reject);
+      writeStream.on('finish', resolve);
+
+      readStream.pipe(gunzip).pipe(writeStream);
+    });
+
+    fs.renameSync(tmpPath, basePath);
+    fs.unlinkSync(gzPath);
+
+    const decompressedSize = fs.statSync(basePath).size;
+
+    entry.file = path.basename(basePath);
+    entry.compressed = false;
+    entry.originalSize = decompressedSize;
+    entry.compressedSize = 0;
+    entry.size = decompressedSize;
+    entry.compressedAt = null;
+
+    await this._saveFileIndex();
+
+    this.emit('decompression-finished', {
+      file: entry.file,
+      size: decompressedSize
+    });
+
+    return { success: true, file: entry.file, size: decompressedSize };
+  }
+
+  async compressAllOldFiles() {
+    if (!this.options.enableCompression) return { skipped: true };
+
+    const currentBaseName = path.basename(this.currentFile);
+    const results = [];
+
+    for (let i = 0; i < this.fileIndex.length; i++) {
+      const entry = this.fileIndex[i];
+      if (entry.compressed) continue;
+      if (entry.file === currentBaseName) continue;
+
+      try {
+        const filePath = path.join(this.options.logDir, entry.file);
+        if (!fs.existsSync(filePath)) continue;
+
+        this.isCompressing.add(entry.file);
+        await this._compressFileInternal(filePath, i);
+        this.isCompressing.delete(entry.file);
+        results.push({ 
+          file: this.fileIndex[i]?.file || entry.file, 
+          success: true 
+        });
+      } catch (err) {
+        this.isCompressing.delete(entry.file);
+        results.push({ file: entry.file, success: false, error: err.message });
+      }
+    }
+
+    return { 
+      total: results.length, 
+      success: results.filter(r => r.success).length,
+      failed: results.filter(r => !r.success).length,
+      details: results 
+    };
   }
 
   async queryRecords(options = {}) {
@@ -359,7 +649,7 @@ class LogManager extends EventEmitter {
     let skipped = 0;
     let readCount = 0;
 
-    const stream = fs.createReadStream(filePath, { encoding: this.options.encoding });
+    const stream = await this._createReadStream(filePath);
     let buffer = '';
 
     for await (const chunk of stream) {
@@ -466,7 +756,6 @@ class LogManager extends EventEmitter {
 
     try {
       let isFirstRecord = true;
-      const jsonDataStartPos = format === 'json' ? 0 : 0;
 
       if (format === 'csv') {
         const headers = [
@@ -486,7 +775,6 @@ class LogManager extends EventEmitter {
         }
         await writeAsync(headers.join(',') + '\n');
       } else if (format === 'jsonl') {
-        // JSONL 格式：每行一个 JSON 对象
       } else {
         await writeAsync('{\n');
         await writeAsync(`  "generatedAt": "${new Date().toISOString()}",\n`);
@@ -497,10 +785,7 @@ class LogManager extends EventEmitter {
 
       for (const indexEntry of matchingFiles) {
         const filePath = path.join(this.options.logDir, indexEntry.file);
-        const stream = fs.createReadStream(filePath, { 
-          encoding: this.options.encoding,
-          highWaterMark: 64 * 1024
-        });
+        const stream = await this._createReadStream(filePath);
         let buffer = '';
 
         for await (const chunk of stream) {
@@ -573,7 +858,6 @@ class LogManager extends EventEmitter {
       }
 
       if (format === 'csv') {
-        // CSV 格式，summary 作为注释或单独文件
         if (includeSummary) {
           const calcAvg = (s) => s.count > 0 ? parseFloat((s.sum / s.count).toFixed(2)) : 0;
           await writeAsync('\n');
@@ -584,7 +868,6 @@ class LogManager extends EventEmitter {
           await writeAsync(`# 总记录数: ${totalExported}\n`);
         }
       } else if (format === 'jsonl') {
-        // JSONL 没有 summary
       } else {
         const calcAvg = (s) => s.count > 0 ? parseFloat((s.sum / s.count).toFixed(2)) : 0;
         
@@ -652,7 +935,12 @@ class LogManager extends EventEmitter {
   }
 
   getFileList() {
-    return [...this.fileIndex];
+    return this.fileIndex.map(entry => ({
+      ...entry,
+      compressionRatio: entry.compressed && entry.originalSize > 0
+        ? parseFloat(((1 - entry.compressedSize / entry.originalSize) * 100).toFixed(1))
+        : 0
+    }));
   }
 
   getTotalRecordCount() {
@@ -699,6 +987,24 @@ class LogManager extends EventEmitter {
       endTime
     });
     return result;
+  }
+
+  getCompressionStats() {
+    const compressedFiles = this.fileIndex.filter(f => f.compressed);
+    const totalOriginalSize = compressedFiles.reduce((sum, f) => sum + (f.originalSize || 0), 0);
+    const totalCompressedSize = compressedFiles.reduce((sum, f) => sum + (f.compressedSize || f.size || 0), 0);
+
+    return {
+      totalFiles: this.fileIndex.length,
+      compressedCount: compressedFiles.length,
+      uncompressedCount: this.fileIndex.length - compressedFiles.length,
+      totalOriginalSize,
+      totalCompressedSize,
+      savedBytes: totalOriginalSize - totalCompressedSize,
+      averageRatio: totalOriginalSize > 0 
+        ? parseFloat(((1 - totalCompressedSize / totalOriginalSize) * 100).toFixed(1))
+        : 0
+    };
   }
 }
 

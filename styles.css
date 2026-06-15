@@ -924,8 +924,42 @@ body {
   color: var(--danger-color);
 }
 
+.text-success {
+  color: var(--success-color);
+}
+
 .empty-row td {
   color: var(--danger-color);
+}
+
+.btn-xs {
+  padding: 4px 8px;
+  font-size: 11px;
+}
+
+.badge-success {
+  background: var(--success-color);
+  color: white;
+}
+
+.badge-secondary {
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-color);
+}
+
+.compression-stats-bar {
+  padding: 10px 20px;
+  background: rgba(16, 185, 129, 0.1);
+  border-bottom: 1px solid var(--border-color);
+  display: flex;
+  gap: 24px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.compression-stats-bar strong {
+  color: var(--text-primary);
 }
 
 @media (max-width: 1200px) {

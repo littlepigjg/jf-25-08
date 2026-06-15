@@ -1,51 +1,79 @@
 [
   {
-    "file": "test_log_2026-06-11_04-30-57.jsonl",
-    "startTime": "2026-06-11T04:30:57.456Z",
-    "endTime": "2026-06-11T04:30:57.460Z",
+    "file": "test_log_2026-06-15_08-23-17.jsonl",
+    "startTime": "2026-06-15T08:23:17.747Z",
+    "endTime": "2026-06-15T08:23:17.751Z",
     "recordCount": 5,
-    "size": 1440
+    "size": 1435,
+    "compressed": false,
+    "originalSize": 0,
+    "compressedSize": 0,
+    "compressedAt": null
   },
   {
-    "file": "test_log_2026-06-11_04-30-57_1.jsonl",
-    "startTime": "2026-06-11T04:30:57.612Z",
-    "endTime": "2026-06-11T04:30:57.611Z",
+    "file": "test_log_2026-06-15_08-23-17_1.jsonl",
+    "startTime": "2026-06-15T08:23:17.946Z",
+    "endTime": "2026-06-15T08:23:17.937Z",
     "recordCount": 5,
-    "size": 1438
+    "size": 1436,
+    "compressed": false,
+    "originalSize": 0,
+    "compressedSize": 0,
+    "compressedAt": null
   },
   {
-    "file": "test_log_2026-06-11_04-30-57_2.jsonl",
-    "startTime": "2026-06-11T04:30:57.764Z",
-    "endTime": "2026-06-11T04:30:57.763Z",
+    "file": "test_log_2026-06-15_08-23-18.jsonl",
+    "startTime": "2026-06-15T08:23:18.097Z",
+    "endTime": "2026-06-15T08:23:18.093Z",
     "recordCount": 5,
-    "size": 1438
+    "size": 1436,
+    "compressed": false,
+    "originalSize": 0,
+    "compressedSize": 0,
+    "compressedAt": null
   },
   {
-    "file": "test_log_2026-06-11_04-30-57_3.jsonl",
-    "startTime": "2026-06-11T04:30:57.914Z",
-    "endTime": "2026-06-11T04:30:57.913Z",
+    "file": "test_log_2026-06-15_08-23-18_1.jsonl",
+    "startTime": "2026-06-15T08:23:18.257Z",
+    "endTime": "2026-06-15T08:23:18.256Z",
     "recordCount": 5,
-    "size": 1436
+    "size": 1438,
+    "compressed": false,
+    "originalSize": 0,
+    "compressedSize": 0,
+    "compressedAt": null
   },
   {
-    "file": "test_log_2026-06-11_04-30-58.jsonl",
-    "startTime": "2026-06-11T04:30:58.064Z",
-    "endTime": "2026-06-11T04:30:58.735Z",
+    "file": "test_log_2026-06-15_08-23-18_2.jsonl",
+    "startTime": "2026-06-15T08:23:18.412Z",
+    "endTime": "2026-06-15T08:23:19.088Z",
     "recordCount": 5,
-    "size": 1444
+    "size": 1443,
+    "compressed": false,
+    "originalSize": 0,
+    "compressedSize": 0,
+    "compressedAt": null
   },
   {
-    "file": "test_log_2026-06-11.jsonl",
-    "startTime": "2026-06-11T04:30:58.736Z",
-    "endTime": "2026-06-11T04:30:58.736Z",
+    "file": "test_log_2026-06-15.jsonl",
+    "startTime": "2026-06-15T08:23:19.089Z",
+    "endTime": "2026-06-15T08:23:19.090Z",
     "recordCount": 0,
-    "size": 1
+    "size": 1,
+    "compressed": false,
+    "originalSize": 0,
+    "compressedSize": 0,
+    "compressedAt": null
   },
   {
-    "file": "test_log_2026-06-11_1.jsonl",
-    "startTime": "2026-06-11T04:30:58.737Z",
-    "endTime": "2026-06-01T04:30:58.737Z",
+    "file": "test_log_2026-06-15_1.jsonl",
+    "startTime": "2026-06-15T08:23:19.091Z",
+    "endTime": "2026-06-05T08:23:19.091Z",
     "recordCount": 5,
-    "size": 799
+    "size": 799,
+    "compressed": false,
+    "originalSize": 0,
+    "compressedSize": 0,
+    "compressedAt": null
   }
 ]

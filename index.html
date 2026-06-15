@@ -183,23 +183,29 @@
             <h3>📁 日志文件列表</h3>
             <div class="file-actions">
               <button class="btn btn-outline btn-sm" id="btnRefreshFiles">刷新</button>
+              <button class="btn btn-outline btn-sm" id="btnCompressAll">压缩全部旧文件</button>
               <button class="btn btn-outline btn-sm" id="btnCleanOld">清理旧日志</button>
             </div>
           </div>
           <div class="files-summary" id="filesSummary"></div>
+          <div class="compression-stats" id="compressionStats"></div>
           <div class="files-table-container">
             <table class="files-table">
               <thead>
                 <tr>
                   <th>文件名</th>
+                  <th>状态</th>
                   <th>开始时间</th>
                   <th>结束时间</th>
                   <th>记录数</th>
-                  <th>文件大小</th>
+                  <th>原始大小</th>
+                  <th>压缩后大小</th>
+                  <th>压缩率</th>
+                  <th>操作</th>
                 </tr>
               </thead>
               <tbody id="filesTableBody">
-                <tr><td colspan="5" class="empty-state">暂无日志文件，请先启动记录</td></tr>
+                <tr><td colspan="9" class="empty-state">暂无日志文件，请先启动记录</td></tr>
               </tbody>
             </table>
           </div>
@@ -251,6 +257,21 @@
               <label>单文件最大大小 (MB)</label>
               <input type="range" id="maxFileSize" min="10" max="500" step="10" value="50">
               <span class="threshold-value" id="maxFileSizeValue">50 MB</span>
+            </div>
+          </div>
+          
+          <div class="settings-section">
+            <h3>压缩设置</h3>
+            <div class="setting-item">
+              <label class="checkbox-label">
+                <input type="checkbox" id="enableCompression" checked>
+                启用自动压缩
+              </label>
+            </div>
+            <div class="setting-item">
+              <label>压缩阈值 (MB)</label>
+              <input type="range" id="compressionThreshold" min="10" max="500" step="10" value="100">
+              <span class="threshold-value" id="compressionThresholdValue">100 MB</span>
             </div>
           </div>
         </div>

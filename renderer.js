@@ -245,6 +245,7 @@ function bindEvents() {
   document.getElementById('btnLoadMore').addEventListener('click', loadMoreHistory);
 
   document.getElementById('btnRefreshFiles').addEventListener('click', refreshFiles);
+  document.getElementById('btnCompressAll').addEventListener('click', compressAllOldFiles);
   document.getElementById('btnCleanOld').addEventListener('click', openCleanModal);
 
   document.getElementById('exportRange').addEventListener('change', (e) => {
@@ -284,6 +285,10 @@ function bindEvents() {
 
   document.getElementById('maxFileSize').addEventListener('input', (e) => {
     document.getElementById('maxFileSizeValue').textContent = e.target.value + ' MB';
+  });
+
+  document.getElementById('compressionThreshold').addEventListener('input', (e) => {
+    document.getElementById('compressionThresholdValue').textContent = e.target.value + ' MB';
   });
 }
 
@@ -369,6 +374,14 @@ ipcRenderer.on('thresholds-data', (event, thresholds) => {
     document.getElementById('maxFileSize').value = sizeMB;
     document.getElementById('maxFileSizeValue').textContent = sizeMB + ' MB';
   }
+  if (thresholds.enableCompression !== undefined) {
+    document.getElementById('enableCompression').checked = thresholds.enableCompression;
+  }
+  if (thresholds.compressionThreshold) {
+    const compressSizeMB = Math.round(thresholds.compressionThreshold / 1024 / 1024);
+    document.getElementById('compressionThreshold').value = compressSizeMB;
+    document.getElementById('compressionThresholdValue').textContent = compressSizeMB + ' MB';
+  }
 });
 
 ipcRenderer.on('thresholds-updated', (event, thresholds) => {
@@ -409,6 +422,64 @@ ipcRenderer.on('history-result', (event, result) => {
 ipcRenderer.on('log-files', (event, files) => {
   currentFiles = files;
   renderFiles(files);
+  updateCompressionStats();
+});
+
+ipcRenderer.on('compression-started', (event, info) => {
+  showToast('info', `开始压缩文件: ${info.file}`);
+});
+
+ipcRenderer.on('compression-finished', (event, info) => {
+  const saved = formatBytes(info.originalSize - info.compressedSize);
+  const ratio = ((info.ratio || 0) * 100).toFixed(1);
+  showToast('success', `压缩完成: ${info.file}，节省空间: ${saved} (${ratio}%)`);
+  refreshFiles();
+});
+
+ipcRenderer.on('decompression-started', (event, info) => {
+  showToast('info', `开始解压文件: ${info.file}`);
+});
+
+ipcRenderer.on('decompression-finished', (event, info) => {
+  showToast('success', `解压完成: ${info.file}`);
+  refreshFiles();
+});
+
+ipcRenderer.on('compress-result', (event, result) => {
+  if (result.error) {
+    showToast('error', `压缩失败: ${result.error}`);
+  } else if (result.alreadyCompressed) {
+    showToast('warning', '文件已经是压缩状态');
+  } else {
+    showToast('success', `压缩成功，节省空间: ${formatBytes(result.originalSize - result.compressedSize)}`);
+    refreshFiles();
+  }
+});
+
+ipcRenderer.on('decompress-result', (event, result) => {
+  if (result.error) {
+    showToast('error', `解压失败: ${result.error}`);
+  } else if (result.alreadyDecompressed) {
+    showToast('warning', '文件已经是解压状态');
+  } else {
+    showToast('success', `解压成功`);
+    refreshFiles();
+  }
+});
+
+ipcRenderer.on('compress-all-result', (event, result) => {
+  if (result.error) {
+    showToast('error', `批量压缩失败: ${result.error}`);
+  } else if (result.skipped) {
+    showToast('warning', '压缩功能未启用');
+  } else {
+    showToast('success', `批量压缩完成: 成功 ${result.success} 个，失败 ${result.failed} 个`);
+    refreshFiles();
+  }
+});
+
+ipcRenderer.on('compression-stats', (event, stats) => {
+  renderCompressionStats(stats);
 });
 
 ipcRenderer.on('old-logs-deleted', (event, result) => {
@@ -693,29 +764,94 @@ function renderFiles(files) {
   const summary = document.getElementById('filesSummary');
   
   if (files.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="5" class="empty-state">暂无日志文件，请先启动记录</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="9" class="empty-state">暂无日志文件，请先启动记录</td></tr>';
     summary.innerHTML = '';
     return;
   }
   
   const totalSize = files.reduce((sum, f) => sum + f.size, 0);
+  const totalOriginalSize = files.reduce((sum, f) => sum + (f.compressed ? f.originalSize : f.size), 0);
   const totalRecords = files.reduce((sum, f) => sum + f.recordCount, 0);
   
   summary.innerHTML = `
     <span>共 <strong>${files.length}</strong> 个文件</span>
     <span><strong>${formatBytes(totalSize)}</strong> 磁盘空间</span>
+    <span>原始大小: <strong>${formatBytes(totalOriginalSize)}</strong></span>
     <span><strong>${totalRecords}</strong> 条记录</span>
   `;
   
-  tbody.innerHTML = files.map(f => `
-    <tr>
-      <td>${escapeHtml(f.file)}</td>
-      <td>${new Date(f.startTime).toLocaleString('zh-CN')}</td>
-      <td>${new Date(f.endTime).toLocaleString('zh-CN')}</td>
-      <td>${f.recordCount.toLocaleString()}</td>
-      <td>${formatBytes(f.size)}</td>
-    </tr>
-  `).join('');
+  tbody.innerHTML = files.map(f => {
+    const statusBadge = f.compressed 
+      ? '<span class="badge badge-success">已压缩</span>' 
+      : '<span class="badge badge-secondary">未压缩</span>';
+    const originalSize = f.compressed ? formatBytes(f.originalSize) : formatBytes(f.size);
+    const compressedSize = f.compressed ? formatBytes(f.compressedSize || f.size) : '-';
+    const ratio = f.compressed && f.compressionRatio !== undefined 
+      ? `<span class="text-success">${f.compressionRatio}%</span>` 
+      : '-';
+    
+    let actionBtn = '';
+    if (f.compressed) {
+      actionBtn = `<button class="btn btn-outline btn-xs" onclick="decompressFile('${escapeHtml(f.file)}')">解压</button>`;
+    } else {
+      actionBtn = `<button class="btn btn-outline btn-xs" onclick="compressFile('${escapeHtml(f.file)}')">压缩</button>`;
+    }
+    
+    return `
+      <tr>
+        <td>${escapeHtml(f.file)}</td>
+        <td>${statusBadge}</td>
+        <td>${new Date(f.startTime).toLocaleString('zh-CN')}</td>
+        <td>${new Date(f.endTime).toLocaleString('zh-CN')}</td>
+        <td>${f.recordCount.toLocaleString()}</td>
+        <td>${originalSize}</td>
+        <td>${compressedSize}</td>
+        <td>${ratio}</td>
+        <td>${actionBtn}</td>
+      </tr>
+    `;
+  }).join('');
+}
+
+function compressFile(fileName) {
+  if (confirm(`确定要压缩文件 ${fileName} 吗？`)) {
+    ipcRenderer.send('compress-file', fileName);
+    showToast('info', '正在压缩...');
+  }
+}
+
+function decompressFile(fileName) {
+  if (confirm(`确定要解压文件 ${fileName} 吗？`)) {
+    ipcRenderer.send('decompress-file', fileName);
+    showToast('info', '正在解压...');
+  }
+}
+
+function compressAllOldFiles() {
+  if (confirm('确定要压缩所有旧的未压缩日志文件吗？')) {
+    ipcRenderer.send('compress-all-old');
+    showToast('info', '正在批量压缩...');
+  }
+}
+
+function updateCompressionStats() {
+  ipcRenderer.send('get-compression-stats');
+}
+
+function renderCompressionStats(stats) {
+  const container = document.getElementById('compressionStats');
+  if (!stats || stats.compressedCount === 0) {
+    container.innerHTML = '';
+    return;
+  }
+  
+  container.innerHTML = `
+    <div class="compression-stats-bar">
+      <span>📦 已压缩文件: <strong>${stats.compressedCount}</strong> / ${stats.totalFiles}</span>
+      <span>已节省空间: <strong class="text-success">${formatBytes(stats.savedBytes)}</strong></span>
+      <span>平均压缩率: <strong class="text-success">${stats.averageRatio}%</strong></span>
+    </div>
+  `;
 }
 
 function openSettings() {
@@ -733,7 +869,9 @@ function saveSettings() {
     memory: parseInt(document.getElementById('memoryThreshold').value),
     disk: parseInt(document.getElementById('diskThreshold').value),
     splitStrategy: document.getElementById('splitStrategy').value,
-    maxFileSize: parseInt(document.getElementById('maxFileSize').value) * 1024 * 1024
+    maxFileSize: parseInt(document.getElementById('maxFileSize').value) * 1024 * 1024,
+    enableCompression: document.getElementById('enableCompression').checked,
+    compressionThreshold: parseInt(document.getElementById('compressionThreshold').value) * 1024 * 1024
   };
   
   const logIntervalSec = parseInt(document.getElementById('logInterval').value);

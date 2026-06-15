@@ -16,6 +16,8 @@ let maxHistoryPoints = 60;
 let logIntervalMs = 60000;
 let splitStrategy = 'daily';
 let maxFileSize = 50 * 1024 * 1024;
+let enableCompression = true;
+let compressionThreshold = 100 * 1024 * 1024;
 
 let logManager = null;
 
@@ -226,7 +228,9 @@ ipcMain.on('start-logging', async (event) => {
     maxFileSize,
     flushInterval: Math.max(2000, logIntervalMs),
     logDir,
-    baseName: 'performance_log'
+    baseName: 'performance_log',
+    enableCompression,
+    compressionThreshold
   });
 
   logManager.on('file-created', (info) => {
@@ -238,6 +242,30 @@ ipcMain.on('start-logging', async (event) => {
   logManager.on('flushed', (info) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('log-flushed', info);
+    }
+  });
+
+  logManager.on('compression-started', (info) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('compression-started', info);
+    }
+  });
+
+  logManager.on('compression-finished', (info) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('compression-finished', info);
+    }
+  });
+
+  logManager.on('decompression-started', (info) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('decompression-started', info);
+    }
+  });
+
+  logManager.on('decompression-finished', (info) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('decompression-finished', info);
     }
   });
 
@@ -289,11 +317,79 @@ ipcMain.on('update-thresholds', (event, thresholds) => {
   if (thresholds.maxFileSize) {
     maxFileSize = thresholds.maxFileSize;
   }
-  event.reply('thresholds-updated', { ...alertThresholds, splitStrategy, maxFileSize });
+  if (thresholds.enableCompression !== undefined) {
+    enableCompression = thresholds.enableCompression;
+  }
+  if (thresholds.compressionThreshold) {
+    compressionThreshold = thresholds.compressionThreshold;
+  }
+  event.reply('thresholds-updated', { 
+    ...alertThresholds, 
+    splitStrategy, 
+    maxFileSize,
+    enableCompression,
+    compressionThreshold
+  });
 });
 
 ipcMain.on('get-thresholds', (event) => {
-  event.reply('thresholds-data', { ...alertThresholds, splitStrategy, maxFileSize });
+  event.reply('thresholds-data', { 
+    ...alertThresholds, 
+    splitStrategy, 
+    maxFileSize,
+    enableCompression,
+    compressionThreshold
+  });
+});
+
+ipcMain.on('compress-file', async (event, fileName) => {
+  if (!logManager) {
+    event.reply('compress-result', { success: false, error: '日志管理器未启动' });
+    return;
+  }
+  try {
+    const result = await logManager.compressFile(fileName);
+    event.reply('compress-result', result);
+  } catch (err) {
+    event.reply('compress-result', { success: false, error: err.message });
+  }
+});
+
+ipcMain.on('decompress-file', async (event, fileName) => {
+  if (!logManager) {
+    event.reply('decompress-result', { success: false, error: '日志管理器未启动' });
+    return;
+  }
+  try {
+    const result = await logManager.decompressFile(fileName);
+    event.reply('decompress-result', result);
+  } catch (err) {
+    event.reply('decompress-result', { success: false, error: err.message });
+  }
+});
+
+ipcMain.on('compress-all-old', async (event) => {
+  if (!logManager) {
+    event.reply('compress-all-result', { success: false, error: '日志管理器未启动' });
+    return;
+  }
+  try {
+    const result = await logManager.compressAllOldFiles();
+    event.reply('compress-all-result', result);
+  } catch (err) {
+    event.reply('compress-all-result', { success: false, error: err.message });
+  }
+});
+
+ipcMain.on('get-compression-stats', (event) => {
+  if (!logManager) {
+    event.reply('compression-stats', { 
+      totalFiles: 0, compressedCount: 0, uncompressedCount: 0,
+      totalOriginalSize: 0, totalCompressedSize: 0, savedBytes: 0, averageRatio: 0
+    });
+    return;
+  }
+  event.reply('compression-stats', logManager.getCompressionStats());
 });
 
 ipcMain.on('export-report', async (event, options = {}) => {
